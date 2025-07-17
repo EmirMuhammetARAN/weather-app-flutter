@@ -56,7 +56,17 @@ A beautiful Flutter weather application with animated effects and immersive soun
 
 ## 📱 Screenshots
 
-*Add screenshots of your app here*
+| Sunny Weather | Cloudy Weather | Rainy Weather |
+|---------------|----------------|---------------|
+| ![Sunny](screenshots/01-sunny-weather.png) | ![Cloudy](screenshots/02-cloudy-weather.png) | ![Rainy](screenshots/03-rainy-weather.png) |
+
+| City Selection | Hourly Forecast | Daily Details |
+|----------------|-----------------|---------------|
+| ![City Selection](screenshots/04-city-selection.png) | ![Hourly](screenshots/05-hourly-forecast.png) | ![Daily](screenshots/06-daily-details.png) |
+
+| Weather Alert |
+|---------------|
+| ![Alert](screenshots/07-weather-alert.png) |
 
 ## 🛠️ Technical Details
 
