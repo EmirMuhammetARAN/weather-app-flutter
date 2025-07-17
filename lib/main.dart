@@ -75,116 +75,7 @@ class _WeatherHomePageState extends State<WeatherHomePage> {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
-        final current = data['list'][0];
-        final currentWeatherData = {
-          'temp': current['main']['temp'].round(),
-          'feels_like': current['main']['feels_like'].round(),
-          'description': current['weather'][0]['description'],
-          'date': DateTime.parse(current['dt_txt']),
-          'icon': current['weather'][0]['icon'],
-          'wind_speed': current['wind']['speed'],
-          'humidity': current['main']['humidity'],
-          'pressure': current['main']['pressure'],
-          'sunrise': data['city']['sunrise'],
-          'sunset': data['city']['sunset'],
-        };
-        String? asset;
-        final description =
-            currentWeatherData['description']?.toLowerCase() ?? '';
-
-        if (description.contains('rain')) {
-          asset = 'rain.mp3';
-        } else if (description.contains('clear')) {
-          asset = 'birds.mp3';
-        }
-        if (asset != null && asset != _currentSound) {
-          await _audioPlayer?.stop();
-          _audioPlayer = AudioPlayer();
-          await _audioPlayer!.play(AssetSource(asset));
-          _currentSound = asset;
-        }
-        final lat = data['city']['coord']['lat'];
-        final lon = data['city']['coord']['lon'];
-
-        final oneCallUrl =
-            'https://api.openweathermap.org/data/2.5/onecall?lat=$lat&lon=$lon&exclude=minutely,hourly,daily,alerts&appid=$apiKey';
-        final oneCallResponse = await http.get(Uri.parse(oneCallUrl));
-
-        if (oneCallResponse.statusCode == 200) {
-          final oneCallData = json.decode(oneCallResponse.body);
-          uvIndex = oneCallData['current']['uvi']?.toDouble();
-          if (oneCallData['alerts'] != null &&
-              oneCallData['alerts'].isNotEmpty) {
-            weatherAlert = oneCallData['alerts'][0]['event'] +
-                ": " +
-                oneCallData['alerts'][0]['description'];
-          }
-        }
-        final aqiUrl =
-            'https://api.openweathermap.org/data/2.5/air_pollution?lat=$lat&lon=$lon&appid=$apiKey';
-        final aqiResponse = await http.get(Uri.parse(aqiUrl));
-        if (aqiResponse.statusCode == 200) {
-          final aqiData = json.decode(aqiResponse.body);
-          aqi = aqiData['list'][0]['main']['aqi'];
-        }
-
-        final now = DateTime.now();
-        final List<Map<String, dynamic>> hourlyData =
-            data['list'].map<Map<String, dynamic>>((item) {
-          final itemTime = DateTime.parse(item['dt_txt']);
-          return {
-            'hour': '${itemTime.hour.toString().padLeft(2, '0')}:00',
-            'temp': item['main']['temp'].round(),
-            'description': item['weather'][0]['description'] ?? 'clouds',
-            'icon': item['weather'][0]['icon'],
-            'pop': ((item['pop'] ?? 0.0) * 100).round(),
-            'time': itemTime,
-          };
-        }).where((item) {
-          final itemTime = item['time'] as DateTime;
-          return itemTime.isAfter(now);
-        }).toList();
-        final Map<String, List<Map<String, dynamic>>> grouped = {};
-        for (var item in data['list']) {
-          final itemDate = DateTime.parse(item['dt_txt']);
-          final dayKey = '${itemDate.year}-${itemDate.month}-${itemDate.day}';
-          grouped.putIfAbsent(dayKey, () => []).add({
-            'date': itemDate,
-            'temp_min': item['main']['temp_min'],
-            'temp_max': item['main']['temp_max'],
-            'icon': item['weather'][0]['icon'],
-            'description': item['weather'][0]['description'],
-          });
-        }
-
-        final List<Map<String, dynamic>> dailyData = [];
-        grouped.forEach((key, value) {
-          final minTemp =
-              value.map((e) => e['temp_min']).reduce((a, b) => a < b ? a : b);
-          final maxTemp =
-              value.map((e) => e['temp_max']).reduce((a, b) => a > b ? a : b);
-          final nineAM = value.firstWhere(
-            (e) => e['date'].hour == 9,
-            orElse: () => value[0],
-          );
-          dailyData.add({
-            'date': nineAM['date'],
-            'day': '${nineAM['date'].day}/${nineAM['date'].month}',
-            'temp_max': maxTemp.round(),
-            'temp_min': minTemp.round(),
-            'icon': nineAM['icon'],
-            'description': nineAM['description'],
-            'details': value,
-          });
-        });
-
-        setState(() {
-          currentWeather = currentWeatherData;
-          hourly = hourlyData;
-          daily = dailyData;
-          isLoading = false;
-        });
+        await _processWeatherData(data);
       } else {
         throw Exception('Failed to load weather data');
       }
@@ -192,7 +83,162 @@ class _WeatherHomePageState extends State<WeatherHomePage> {
       setState(() {
         isLoading = false;
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Hava durumu alınamadı: $e'),
+        ),
+      );
     }
+  }
+
+  Future<void> _fetchWeatherByCoordinates(double lat, double lon) async {
+    setState(() {
+      isLoading = true;
+    });
+
+    final apiKey = dotenv.env['OPENWEATHER_API_KEY'] ?? '';
+    final url =
+        'https://api.openweathermap.org/data/2.5/forecast?lat=$lat&lon=$lon&units=metric&appid=$apiKey';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        // Şehir adını API'dan al
+        setState(() {
+          city = data['city']['name'] ?? 'Unknown Location';
+        });
+
+        // Mevcut weather processing kodu
+        await _processWeatherData(data);
+      } else {
+        throw Exception('Failed to load weather data');
+      }
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Hava durumu alınamadı: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _processWeatherData(Map<String, dynamic> data) async {
+    final current = data['list'][0];
+    final currentWeatherData = {
+      'temp': current['main']['temp'].round(),
+      'feels_like': current['main']['feels_like'].round(),
+      'description': current['weather'][0]['description'],
+      'date': DateTime.parse(current['dt_txt']),
+      'icon': current['weather'][0]['icon'],
+      'wind_speed': current['wind']['speed'],
+      'humidity': current['main']['humidity'],
+      'pressure': current['main']['pressure'],
+      'sunrise': data['city']['sunrise'],
+      'sunset': data['city']['sunset'],
+    };
+
+    String? asset;
+    final description = currentWeatherData['description']?.toLowerCase() ?? '';
+
+    if (description.contains('rain')) {
+      asset = 'rain.mp3';
+    } else if (description.contains('clear')) {
+      asset = 'birds.mp3';
+    }
+    if (asset != null && asset != _currentSound) {
+      await _audioPlayer?.stop();
+      _audioPlayer = AudioPlayer();
+      await _audioPlayer!.play(AssetSource(asset));
+      _currentSound = asset;
+    }
+
+    final lat = data['city']['coord']['lat'];
+    final lon = data['city']['coord']['lon'];
+
+    final oneCallUrl =
+        'https://api.openweathermap.org/data/2.5/onecall?lat=$lat&lon=$lon&exclude=minutely,hourly,daily,alerts&appid=${dotenv.env['OPENWEATHER_API_KEY'] ?? ''}';
+    final oneCallResponse = await http.get(Uri.parse(oneCallUrl));
+
+    if (oneCallResponse.statusCode == 200) {
+      final oneCallData = json.decode(oneCallResponse.body);
+      uvIndex = oneCallData['current']['uvi']?.toDouble();
+      if (oneCallData['alerts'] != null && oneCallData['alerts'].isNotEmpty) {
+        weatherAlert = oneCallData['alerts'][0]['event'] +
+            ": " +
+            oneCallData['alerts'][0]['description'];
+      }
+    }
+
+    final aqiUrl =
+        'https://api.openweathermap.org/data/2.5/air_pollution?lat=$lat&lon=$lon&appid=${dotenv.env['OPENWEATHER_API_KEY'] ?? ''}';
+    final aqiResponse = await http.get(Uri.parse(aqiUrl));
+    if (aqiResponse.statusCode == 200) {
+      final aqiData = json.decode(aqiResponse.body);
+      aqi = aqiData['list'][0]['main']['aqi'];
+    }
+
+    final now = DateTime.now();
+    final List<Map<String, dynamic>> hourlyData =
+        data['list'].map<Map<String, dynamic>>((item) {
+      final itemTime = DateTime.parse(item['dt_txt']);
+      return {
+        'hour': '${itemTime.hour.toString().padLeft(2, '0')}:00',
+        'temp': item['main']['temp'].round(),
+        'description': item['weather'][0]['description'] ?? 'clouds',
+        'icon': item['weather'][0]['icon'],
+        'pop': ((item['pop'] ?? 0.0) * 100).round(),
+        'time': itemTime,
+      };
+    }).where((item) {
+      final itemTime = item['time'] as DateTime;
+      return itemTime.isAfter(now);
+    }).toList();
+
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
+    for (var item in data['list']) {
+      final itemDate = DateTime.parse(item['dt_txt']);
+      final dayKey = '${itemDate.year}-${itemDate.month}-${itemDate.day}';
+      grouped.putIfAbsent(dayKey, () => []).add({
+        'date': itemDate,
+        'temp_min': item['main']['temp_min'],
+        'temp_max': item['main']['temp_max'],
+        'icon': item['weather'][0]['icon'],
+        'description': item['weather'][0]['description'],
+      });
+    }
+
+    final List<Map<String, dynamic>> dailyData = [];
+    grouped.forEach((key, value) {
+      final minTemp =
+          value.map((e) => e['temp_min']).reduce((a, b) => a < b ? a : b);
+      final maxTemp =
+          value.map((e) => e['temp_max']).reduce((a, b) => a > b ? a : b);
+      final nineAM = value.firstWhere(
+        (e) => e['date'].hour == 9,
+        orElse: () => value[0],
+      );
+      dailyData.add({
+        'date': nineAM['date'],
+        'day': '${nineAM['date'].day}/${nineAM['date'].month}',
+        'temp_max': maxTemp.round(),
+        'temp_min': minTemp.round(),
+        'icon': nineAM['icon'],
+        'description': nineAM['description'],
+        'details': value,
+      });
+    });
+
+    setState(() {
+      currentWeather = currentWeatherData;
+      hourly = hourlyData;
+      daily = dailyData;
+      isLoading = false;
+    });
   }
 
   String _formatTime(int? timestamp) {
@@ -483,30 +529,51 @@ class _WeatherHomePageState extends State<WeatherHomePage> {
                             icon: Icon(Icons.my_location, color: Colors.white),
                             tooltip: "Konumdan Bul",
                             onPressed: () async {
-                              bool hasPermission =
-                                  await _handleLocationPermission();
-                              if (!hasPermission) {
+                              try {
+                                bool hasPermission =
+                                    await _handleLocationPermission();
+                                if (!hasPermission) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Konum izni gerekli!'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                Position pos =
+                                    await Geolocator.getCurrentPosition(
+                                  desiredAccuracy: LocationAccuracy.high,
+                                );
+
+                                // Web platformunda geocoding sorunları için alternatif çözüm
+                                try {
+                                  List<Placemark> placemarks =
+                                      await placemarkFromCoordinates(
+                                    pos.latitude,
+                                    pos.longitude,
+                                  );
+                                  if (placemarks.isNotEmpty &&
+                                      placemarks.first.locality != null) {
+                                    setState(() {
+                                      city = placemarks.first.locality!;
+                                    });
+                                    fetchWeatherData(city);
+                                  } else {
+                                    // Geocoding başarısızsa koordinatları kullan
+                                    _fetchWeatherByCoordinates(
+                                        pos.latitude, pos.longitude);
+                                  }
+                                } catch (geocodingError) {
+                                  // Geocoding hata verirse koordinatları kullan
+                                  _fetchWeatherByCoordinates(
+                                      pos.latitude, pos.longitude);
+                                }
+                              } catch (e) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('Konum izni gerekli!'),
+                                    content: Text('Konum alınamadı: $e'),
                                   ),
                                 );
-                                return;
-                              }
-                              Position pos =
-                                  await Geolocator.getCurrentPosition(
-                                desiredAccuracy: LocationAccuracy.high,
-                              );
-                              List<Placemark> placemarks =
-                                  await placemarkFromCoordinates(
-                                pos.latitude,
-                                pos.longitude,
-                              );
-                              if (placemarks.isNotEmpty) {
-                                setState(() {
-                                  city = placemarks.first.locality ?? city;
-                                });
-                                fetchWeatherData(city);
                               }
                             },
                           ),
